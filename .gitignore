@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Logs
+logs/
+*.log
+
+# Python tooling
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Others
+*.sqlite3
+*.db
+*.bak
+*.swp
+*.swo
+*.tmp
