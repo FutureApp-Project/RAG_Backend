@@ -34,6 +34,9 @@ Thumbs.db
 # Others
 *.sqlite3
 *.db
+chromadb/
+chromadb/*
+processed_pdfs/
 *.bak
 *.swp
 *.swo
