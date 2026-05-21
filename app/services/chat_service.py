@@ -728,7 +728,7 @@ class ChatService:
     ) -> Dict[str, Any]:
         """
         Intelligent query pipeline with priority-based response hierarchy:
-        1. Cached Q&R pairs (Vector DB) — similarity >= 0.85 → instant return
+        1. Cached Q&R pairs (Vector DB) — similarity >= 0.85 → fallback candidate
         2. Medical document search → refine with local model → back-store
         3. Local model standalone (confidence >= 0.65) → back-store
         4. ChatGPT API → back-store
@@ -748,8 +748,9 @@ class ChatService:
             if conversation_context:
                 logger.info(f"Loaded {len(history)} recent messages for context")
 
-        # ── Step 0: Check cached query-response pairs ──
+        # ── Step 0: Check cached query-response pairs (candidate only) ──
         logger.info(f"Step 0: Checking cached Q&R pairs for: {query[:100]}...")
+        cached_candidate: Optional[Dict[str, Any]] = None
         try:
             cached = self.vector_store.find_cached_response(query)
             if cached:
@@ -758,16 +759,17 @@ class ChatService:
                     f"Cache HIT — confidence={confidence:.3f}, source={cached['source']}"
                 )
                 cached_text = cached.get("response_text", cached.get("response", ""))
-                # Re-format with disclaimer (disclaimer is stripped before caching)
-                formatted_response = self._format_final_response(
-                    cached_text, query, lang, confidence
-                )
-                return {
-                    "response_text": formatted_response,
-                    "source": "vector_db",
-                    "confidence": confidence,
-                    "vector_results": None,
-                }
+                if cached_text and self._is_actionable_answer(cached_text, query):
+                    # Keep as fallback candidate; document-grounded retrieval (Step 1)
+                    # should take priority when available.
+                    cached_candidate = {
+                        "response_text": self._format_final_response(
+                            cached_text, query, lang, confidence
+                        ),
+                        "source": "vector_db",
+                        "confidence": confidence,
+                        "vector_results": None,
+                    }
         except Exception as e:
             logger.warning(f"Cache lookup failed: {str(e)}")
 
@@ -778,7 +780,7 @@ class ChatService:
         if vector_results and vector_results.get("results"):
             logger.info(f"Found {len(vector_results['results'])} results in vector DB")
 
-            # Filter for relevant results, with a preference for generated knowledge
+            # Filter for relevant results, preferring source PDF chunks over generated Q&A
             relevant_results = []
             query_lower = query.lower()
             query_keywords = set(re.findall(r"\w+", query_lower))
@@ -788,6 +790,8 @@ class ChatService:
                 stored_query = (result.get("query_text") or "").lower()
                 similarity = result.get("similarity_score", 0)
                 is_generated = bool(result.get("generated", False))
+                source = (result.get("source") or "").lower()
+                is_pdf_source = source.endswith(".pdf") or "processed_pdfs" in source
 
                 content_keywords = set(re.findall(r"\w+", content))
                 stored_query_keywords = set(re.findall(r"\w+", stored_query))
@@ -801,17 +805,19 @@ class ChatService:
                         stored_query_overlap >= 1 or overlap_count >= 1
                     ):
                         result["match_score"] = (
-                            similarity + 0.15 + min(stored_query_overlap, 3) * 0.05
+                            similarity + 0.06 + min(stored_query_overlap, 3) * 0.05
                         )
+                        result["source_priority"] = 0
                         relevant_results.append(result)
-                elif similarity > 0.3 and overlap_count >= 1:
+                elif similarity >= 0.15 and overlap_count >= 1:
                     result["match_score"] = similarity + min(overlap_count, 3) * 0.03
+                    result["source_priority"] = 2 if is_pdf_source else 1
                     relevant_results.append(result)
 
             if relevant_results:
                 relevant_results.sort(
                     key=lambda result: (
-                        bool(result.get("generated", False)),
+                        result.get("source_priority", 0),
                         result.get("match_score", result.get("similarity_score", 0)),
                     ),
                     reverse=True,
@@ -937,6 +943,10 @@ class ChatService:
                         }
             else:
                 logger.info("No relevant results found in vector DB after filtering")
+
+        if cached_candidate:
+            logger.info("Using cached response as fallback after document retrieval")
+            return cached_candidate
 
         # ── Step 2: Local model standalone ──
         logger.info("Step 2: Trying local model for direct response...")
