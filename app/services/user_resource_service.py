@@ -58,7 +58,7 @@ class UserResourceService:
         SELECT id FROM users
         WHERE username = :username
           AND is_deleted = false
-          AND (:exclude_id::int IS NULL OR id != :exclude_id)
+            AND (CAST(:exclude_id AS INTEGER) IS NULL OR id != :exclude_id)
     """
     )
 

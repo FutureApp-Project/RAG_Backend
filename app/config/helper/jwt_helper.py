@@ -25,6 +25,13 @@ def verify_tokens(credentials: HTTPAuthorizationCredentials = Security(security)
         if "sub" in payload and "username" not in payload:
             payload["username"] = payload["sub"]
 
+        # Normalize role claims so TokenData can consume them consistently.
+        if "roles" not in payload and "role" in payload:
+            role_value = payload.get("role")
+            payload["roles"] = [role_value] if role_value else []
+        elif isinstance(payload.get("roles"), str):
+            payload["roles"] = [payload["roles"]]
+
         user_data = TokenData(**payload)
 
         return user_data

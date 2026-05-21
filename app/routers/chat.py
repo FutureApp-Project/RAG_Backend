@@ -59,11 +59,17 @@ logger.info("Chat router initialized")
 
 def is_user_admin(user_data: TokenData) -> bool:
     """Check if user is admin"""
-    if hasattr(user_data, "role") and user_data.role == "admin":
+    # TokenData contains roles as a list; keep compatibility with legacy token shapes.
+    roles = getattr(user_data, "roles", None)
+    if isinstance(roles, list) and any(str(role).lower() == "admin" for role in roles):
         return True
-    if hasattr(user_data, "is_admin") and user_data.is_admin:
+
+    role = getattr(user_data, "role", None)
+    if isinstance(role, str) and role.lower() == "admin":
         return True
-    return False
+
+    is_admin = getattr(user_data, "is_admin", None)
+    return bool(is_admin)
 
 
 @router.get("/sessions", response_model=List[ChatSessionResponse])
@@ -326,7 +332,10 @@ async def get_session_by_id(
             logger.info(f"Session owner ID: {session_owner_id}")
 
             # Check access rights
-            if not is_admin and session_owner_id != user_data.user_id:
+            owner_id = int(session_owner_id)
+            current_user_id = int(user_data.user_id)
+
+            if not is_admin and owner_id != current_user_id:
                 logger.warning(
                     f"User {user_data.user_id} attempted unauthorized access to session {session_id}"
                 )
@@ -336,7 +345,7 @@ async def get_session_by_id(
                 )
             # Now get the history with the appropriate parameters
             history = await chat_service.get_chat_history(
-                user_id=session_owner_id,  # Always pass the session owner's ID
+                user_id=owner_id,  # Always pass the session owner's ID
                 session_id=session_uuid,
                 is_admin=is_admin,  # Pass admin flag
             )
